@@ -191,7 +191,7 @@ pub fn scan_dirs(
     };
 
     progress(ScanProgress {
-        stage: "done",
+        stage: "done".to_string(),
         message: format!(
             "扫描完成：已归档 {}，未归档 {}，{} GB",
             summary.archived, summary.unique, summary.size_gb
