@@ -194,9 +194,7 @@ pub fn scan_dirs(
         stage: "done",
         message: format!(
             "扫描完成：已归档 {}，未归档 {}，{} GB",
-            summary.archived,
-            summary.unique,
-            summary.size_gb
+            summary.archived, summary.unique, summary.size_gb
         ),
         percent: 100.0,
         archived: summary.archived,
@@ -234,10 +232,7 @@ fn collect_files(root: &Path, skip: Option<&Path>, errors: &mut Vec<String>) -> 
                         path: entry.path().to_path_buf(),
                         size: metadata.len(),
                     }),
-                    Err(err) => push_error(
-                        errors,
-                        format!("{}: {}", entry.path().display(), err),
-                    ),
+                    Err(err) => push_error(errors, format!("{}: {}", entry.path().display(), err)),
                 }
             }
             Err(err) => push_error(errors, format!("遍历失败: {}", err)),
@@ -264,8 +259,8 @@ fn fingerprint(entry: &FileEntry, mode: ScanMode) -> Result<String, String> {
             let tail_len = entry.size.min(SAMPLE_SIZE);
             let head = hash_range(&mut file, 0, head_len).map_err(|err| err.to_string())?;
             let tail_start = entry.size.saturating_sub(tail_len);
-            let tail = hash_range(&mut file, tail_start, tail_len)
-                .map_err(|err| err.to_string())?;
+            let tail =
+                hash_range(&mut file, tail_start, tail_len).map_err(|err| err.to_string())?;
             Ok(format!("f:{}:{}:{}", entry.size, head, tail))
         }
         ScanMode::Exact => {
@@ -416,15 +411,8 @@ mod tests {
         for mode in [ScanMode::Fast, ScanMode::Exact] {
             let cancel = AtomicBool::new(false);
             let mut noop = |_event: ScanProgress| {};
-            let summary = scan_dirs(
-                &archive,
-                &source,
-                Some(&output),
-                mode,
-                &cancel,
-                &mut noop,
-            )
-            .unwrap();
+            let summary =
+                scan_dirs(&archive, &source, Some(&output), mode, &cancel, &mut noop).unwrap();
             assert_eq!(summary.archived, 1);
             assert_eq!(summary.unique, 1);
             assert_eq!(summary.unique_files, vec!["u.bin".to_string()]);

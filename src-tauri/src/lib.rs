@@ -89,11 +89,7 @@ fn demo_done(app: &AppHandle, ok: bool, message: impl Into<String>, report: Stri
 }
 
 #[tauri::command]
-fn start_job(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    config: JobConfig,
-) -> Result<(), String> {
+fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> Result<(), String> {
     let mode = scan::ScanMode::parse(&config.mode)?;
     if config.archive.trim().is_empty()
         || config.source.trim().is_empty()
@@ -231,7 +227,12 @@ fn verify_output(
                 return;
             }
             let percent = (step as f64 / total as f64) * 100.0;
-            demo_progress(&app, "verify", format!("校验骨架 {}/{}", step, total), percent);
+            demo_progress(
+                &app,
+                "verify",
+                format!("校验骨架 {}/{}", step, total),
+                percent,
+            );
             std::thread::sleep(std::time::Duration::from_millis(180));
         }
         running.store(false, Ordering::SeqCst);
