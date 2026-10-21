@@ -1,6 +1,8 @@
 mod model;
+mod scan;
 
 use model::{JobConfig, JobDone, Progress};
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -97,6 +99,14 @@ fn start_job(
     state: State<'_, AppState>,
     config: JobConfig,
 ) -> Result<(), String> {
+    let mode = scan::ScanMode::parse(&config.mode)?;
+    if config.archive.trim().is_empty()
+        || config.source.trim().is_empty()
+        || config.output.trim().is_empty()
+    {
+        return Err("归档目录、原素材目录和输出目录都不能为空。".to_string());
+    }
+
     if state.running.swap(true, Ordering::SeqCst) {
         return Err("任务正在运行。".to_string());
     }
@@ -104,41 +114,103 @@ fn start_job(
 
     let running = state.running.clone();
     let cancel = state.cancel.clone();
+    let archive = PathBuf::from(config.archive.trim());
+    let source = PathBuf::from(config.source.trim());
+    let output_path = config.output.clone();
+    let output = if output_path.trim().is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(output_path))
+    };
+    let dry_run = config.dry_run;
 
     std::thread::spawn(move || {
-        // Phase 0：先用可取消的演示任务跑通前后端进度链路。
-        // Phase 1 会把这里替换为真正的 Rust 扫描/复制实现。
-        let total = 8u32;
-        for step in 0..=total {
-            if cancel.load(Ordering::SeqCst) {
-                running.store(false, Ordering::SeqCst);
-                demo_done(&app, false, "任务已取消", config.output);
-                return;
-            }
+        let progress_app = app.clone();
+        let mut on_progress = |event: scan::ScanProgress| {
+            let _ = progress_app.emit(
+                "job-progress",
+                Progress {
+                    stage: event.stage,
+                    message: event.message,
+                    percent: event.percent,
+                    archived: event.archived,
+                    unique: event.unique,
+                    size_gb: event.size_gb,
+                },
+            );
+        };
 
-            let percent = (step as f64 / total as f64) * 100.0;
-            let message = if step == 0 {
-                "Rust 核心骨架启动（Phase 0）".to_string()
-            } else {
-                format!("演示进度 {}/{}", step, total)
-            };
-            demo_progress(&app, "demo", message, percent);
-            std::thread::sleep(std::time::Duration::from_millis(240));
-        }
-
-        running.store(false, Ordering::SeqCst);
-        demo_done(
-            &app,
-            true,
-            format!(
-                "Rust 骨架演示完成：{} / {}",
-                config.mode, config.copy_mode
-            ),
-            config.output,
+        let result = scan::scan_dirs(
+            &archive,
+            &source,
+            output.as_deref(),
+            mode,
+            &cancel,
+            &mut on_progress,
         );
+        running.store(false, Ordering::SeqCst);
+
+        match result {
+            Ok(summary) => {
+                let prefix = if dry_run {
+                    "试运行完成"
+                } else {
+                    "扫描完成（Phase 1）"
+                };
+                let message = format!(
+                    "{}：已归档 {}，未归档 {}，{} GB；复制将在 Phase 2 接入",
+                    prefix, summary.archived, summary.unique, summary.size_gb
+                );
+                let _ = app.emit(
+                    "job-done",
+                    JobDone {
+                        ok: true,
+                        message,
+                        report: String::new(),
+                        archived: summary.archived,
+                        unique: summary.unique,
+                        size_gb: summary.size_gb,
+                    },
+                );
+            }
+            Err(err) => {
+                let _ = app.emit(
+                    "job-done",
+                    JobDone {
+                        ok: false,
+                        message: err,
+                        report: String::new(),
+                        archived: 0,
+                        unique: 0,
+                        size_gb: "0.0".to_string(),
+                    },
+                );
+            }
+        }
     });
 
     Ok(())
+}
+
+#[tauri::command]
+fn scan_library(config: JobConfig) -> Result<scan::ScanSummary, String> {
+    let mode = scan::ScanMode::parse(&config.mode)?;
+    let output_path = config.output.clone();
+    let output = if output_path.trim().is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(output_path))
+    };
+    let cancel = AtomicBool::new(false);
+    let mut noop = |_event: scan::ScanProgress| {};
+    scan::scan_dirs(
+        Path::new(config.archive.trim()),
+        Path::new(config.source.trim()),
+        output.as_deref(),
+        mode,
+        &cancel,
+        &mut noop,
+    )
 }
 
 #[tauri::command]
@@ -187,6 +259,7 @@ pub fn run() {
             pick_folder,
             open_path,
             start_job,
+            scan_library,
             verify_output,
             cancel_job
         ])
