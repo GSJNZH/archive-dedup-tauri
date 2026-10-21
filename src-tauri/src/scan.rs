@@ -370,8 +370,11 @@ fn push_error(errors: &mut Vec<String>, message: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{scan_dirs, ScanMode, ScanProgress};
     use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+    use std::time::UNIX_EPOCH;
 
     fn test_root(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
