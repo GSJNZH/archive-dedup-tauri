@@ -49,6 +49,8 @@ src-tauri\target\release\archive-dedup-tauri.exe
 
 `.github/workflows/build-tauri.yml` 使用 `windows-latest` 构建：
 
+- 先运行 `cargo test`（扫描核心单元测试）
+- 再执行 `tauri build`
 - 手动运行 `build-tauri`
 - 或推送 `v1.3.0-tauri` 这类标签
 

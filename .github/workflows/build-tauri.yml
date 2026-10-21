@@ -33,6 +33,10 @@ jobs:
       - name: Install Tauri CLI
         run: npm install --global @tauri-apps/cli@^2
 
+      - name: Rust tests
+        working-directory: archive-dedup-tauri/src-tauri
+        run: cargo test
+
       - name: Build Tauri app
         run: tauri build
 
