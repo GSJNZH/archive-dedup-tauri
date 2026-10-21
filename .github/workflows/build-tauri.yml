@@ -9,9 +9,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: archive-dedup-tauri
 
     steps:
       - name: Checkout
@@ -28,13 +25,13 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "archive-dedup-tauri/src-tauri -> target"
+          workspaces: "src-tauri -> target"
 
       - name: Install Tauri CLI
         run: npm install --global @tauri-apps/cli@^2
 
       - name: Rust tests
-        working-directory: archive-dedup-tauri/src-tauri
+        working-directory: src-tauri
         run: cargo test
 
       - name: Build Tauri app
@@ -45,6 +42,6 @@ jobs:
         with:
           name: ArchiveDedup-Tauri-windows
           path: |
-            archive-dedup-tauri/src-tauri/target/release/bundle/nsis/*.exe
-            archive-dedup-tauri/src-tauri/target/release/archive-dedup-tauri.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/archive-dedup-tauri.exe
           if-no-files-found: error
