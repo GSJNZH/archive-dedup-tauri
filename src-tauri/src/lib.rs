@@ -16,16 +16,11 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn pick_folder(title: String) -> Option<String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        rfd::FileDialog::new()
-            .set_title(title)
-            .pick_folder()
-            .map(|path| path.display().to_string())
-    })
-    .await
-    .ok()
-    .flatten()
+fn pick_folder(title: String) -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .pick_folder()
+        .map(|path| path.display().to_string())
 }
 
 #[tauri::command]
