@@ -1,0 +1,12 @@
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+node_modules/
+.playwright/
+.preview/
+
+# Local preview artifacts
+ui-preview.png
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>素材归档去重 · ArchiveDedup</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="logo.png" alt="">
+        <div class="brand-text">
+          <h1>素材归档去重</h1>
+          <p>按内容指纹筛出未归档素材，自动校验并生成报告</p>
+        </div>
+      </div>
+      <div class="top-meta">
+        <span class="version">v1.3.0</span>
+        <a class="github" href="https://github.com/GSJNZH/archive-dedup" target="_blank" rel="noreferrer">GitHub ↗</a>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="column left">
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h2>选择目录</h2>
+              <p>归档工程、原素材与未归档输出位置</p>
+            </div>
+            <span class="badge" id="envBadge">UI 预览</span>
+          </div>
+
+          <div class="paths">
+            <div class="path-row">
+              <label for="archivePath">归档文件夹</label>
+              <input id="archivePath" type="text" spellcheck="false" placeholder="选择剪辑归档输出目录">
+              <button class="btn subtle" data-pick="archive">浏览</button>
+              <button class="btn ghost" data-open="archive">打开</button>
+            </div>
+            <div class="path-row">
+              <label for="sourcePath">原素材文件夹</label>
+              <input id="sourcePath" type="text" spellcheck="false" placeholder="选择相机原素材目录">
+              <button class="btn subtle" data-pick="source">浏览</button>
+              <button class="btn ghost" data-open="source">打开</button>
+            </div>
+            <div class="path-row">
+              <label for="outputPath">输出文件夹</label>
+              <input id="outputPath" type="text" spellcheck="false" placeholder="选择未使用画面输出目录">
+              <button class="btn subtle" data-pick="output">浏览</button>
+              <button class="btn ghost" data-open="output">打开</button>
+            </div>
+          </div>
+          <p class="hint">默认输出：&lt;原素材文件夹&gt;\09_04-未使用画面</p>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h2>执行选项</h2>
+              <p>选择比对强度、处理方式与运行行为</p>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <span class="option-label">比对模式</span>
+            <div class="segmented" id="modeSeg" role="group" aria-label="比对模式">
+              <button type="button" data-value="fast" class="active">快速 <em>推荐</em></button>
+              <button type="button" data-value="turbo">极速</button>
+              <button type="button" data-value="exact">精确</button>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <span class="option-label">处理方式</span>
+            <div class="segmented" id="copySeg" role="group" aria-label="处理方式">
+              <button type="button" data-value="move" class="active">同盘移动</button>
+              <button type="button" data-value="copy">复制</button>
+            </div>
+            <span class="warning">移动会移除原素材中的未归档文件</span>
+          </div>
+
+          <div class="option-row option-row-tight">
+            <span class="option-label">并发</span>
+            <select id="workers" aria-label="并发线程">
+              <option value="1">1 · 机械盘</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8" selected>8 · SSD</option>
+            </select>
+
+            <div class="switches">
+              <label class="switch"><input id="dryRun" type="checkbox"><span class="track"></span>试运行</label>
+              <label class="switch"><input id="verbose" type="checkbox" checked><span class="track"></span>详细日志</label>
+              <label class="switch"><input id="autoVerify" type="checkbox" checked><span class="track"></span>完成后自动校验</label>
+            </div>
+          </div>
+
+          <div class="flow" aria-label="处理流程">
+            <div class="flow-step">
+              <span class="flow-num">01</span>
+              <div><strong>扫描比对</strong><small>归档 vs 原素材</small></div>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <span class="flow-num">02</span>
+              <div><strong>复制 / 移动</strong><small>保留相对目录</small></div>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-step">
+              <span class="flow-num">03</span>
+              <div><strong>自动校验</strong><small>生成完整性报告</small></div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="startBtn">开始处理</button>
+            <button class="btn secondary" id="verifyBtn">仅校验</button>
+            <button class="btn ghost" id="cancelBtn" disabled>取消</button>
+          </div>
+        </article>
+      </section>
+
+      <aside class="column right">
+        <article class="card summary">
+          <div class="card-head">
+            <div>
+              <h2>任务概览</h2>
+              <p id="summaryHint">等待开始</p>
+            </div>
+            <span class="dot" id="runDot"></span>
+          </div>
+          <div class="stats">
+            <div class="stat"><span>归档命中</span><strong id="statArchived">71</strong><small>个文件</small></div>
+            <div class="stat"><span>待处理</span><strong id="statUnique">71</strong><small>个文件</small></div>
+            <div class="stat"><span>数据量</span><strong id="statSize">28.1</strong><small>GB</small></div>
+          </div>
+          <div class="progress-block">
+            <div class="progress"><span id="progressBar"></span></div>
+            <div class="progress-meta"><span id="statusText">就绪</span><span id="percentText">0%</span></div>
+          </div>
+        </article>
+
+        <article class="card log-card">
+          <div class="card-head">
+            <div>
+              <h2>运行日志</h2>
+              <p>逐文件输出比对、复制与校验结果</p>
+            </div>
+            <button class="link" id="clearLog">清空</button>
+          </div>
+          <div class="log" id="log" role="log" aria-live="polite"></div>
+        </article>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>素材归档去重工具 · <span id="footerState">本地预览</span></span>
+      <span>Rust core · Tauri 2 · Web UI</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
