@@ -64,7 +64,7 @@ pub struct ScanSummary {
     pub size_gb: String,
     pub unique_files: Vec<String>,
     pub errors: Vec<String>,
-    pub elapsed_ms: u128,
+    pub elapsed_ms: u64,
     pub mode: String,
 }
 
@@ -186,7 +186,7 @@ pub fn scan_dirs(
         size_gb: gb(unique_bytes),
         unique_files,
         errors,
-        elapsed_ms: started.elapsed().as_millis(),
+        elapsed_ms: started.elapsed().as_millis() as u64,
         mode: mode.label().to_string(),
     };
 
