@@ -7,6 +7,8 @@ pub struct JobConfig {
     #[serde(default)]
     pub source: String,
     #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default)]
     pub output: String,
     #[serde(default)]
     pub mode: String,
@@ -22,6 +24,21 @@ pub struct JobConfig {
 
 fn default_workers() -> usize {
     8
+}
+
+impl JobConfig {
+    pub fn source_paths(&self) -> Vec<String> {
+        let mut paths: Vec<String> = self
+            .sources
+            .iter()
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+            .collect();
+        if paths.is_empty() && !self.source.trim().is_empty() {
+            paths.push(self.source.trim().to_string());
+        }
+        paths
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

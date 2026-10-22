@@ -2,13 +2,13 @@ use crate::scan::{ScanMode, ScanSummary};
 use chrono::Local;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const MANIFEST_NAME: &str = "_archive_dedup_manifest.json";
 
 pub fn write_manifest(
     output: &Path,
-    source: &Path,
+    sources: &[PathBuf],
     archive: &Path,
     mode: ScanMode,
     copy_mode: &str,
@@ -19,13 +19,23 @@ pub fn write_manifest(
         .iter()
         .map(|item| {
             json!({
-                "rel": item.relative.to_string_lossy().to_string(),
+                "rel": item.source_relative.to_string_lossy().to_string(),
+                "source": item.source_root.display().to_string(),
+                "out_rel": item.relative.to_string_lossy().to_string(),
                 "size": item.size,
                 "key": key_to_json(&item.key),
             })
         })
         .collect();
 
+    let source_list: Vec<String> = sources
+        .iter()
+        .map(|source| source.display().to_string())
+        .collect();
+    let first_source = sources
+        .first()
+        .map(|source| source.display().to_string())
+        .unwrap_or_default();
     let payload = json!({
         "version": 1,
         "created": Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -33,7 +43,8 @@ pub fn write_manifest(
         "copy_mode": copy_label(copy_mode),
         "source_count": summary.total,
         "source_bytes": summary.source_bytes,
-        "source": source.display().to_string(),
+        "source": first_source,
+        "sources": source_list,
         "archive": archive.display().to_string(),
         "files": records,
     });

@@ -46,20 +46,23 @@ pub fn run_job(
     let started = Instant::now();
     let mode = ScanMode::parse(&config.mode)?;
     let archive = Path::new(config.archive.trim());
-    let source = Path::new(config.source.trim());
+    let source_paths: Vec<PathBuf> = config
+        .source_paths()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
     let output = Path::new(config.output.trim());
 
-    if archive.as_os_str().is_empty()
-        || source.as_os_str().is_empty()
-        || output.as_os_str().is_empty()
-    {
+    if archive.as_os_str().is_empty() || source_paths.is_empty() || output.as_os_str().is_empty() {
         return Err("归档目录、原素材目录和输出目录都不能为空。".to_string());
     }
     if !archive.is_dir() {
         return Err(format!("归档文件夹不存在：{}", archive.display()));
     }
-    if !source.is_dir() {
-        return Err(format!("原素材文件夹不存在：{}", source.display()));
+    for source in &source_paths {
+        if !source.is_dir() {
+            return Err(format!("原素材文件夹不存在：{}", source.display()));
+        }
     }
 
     let mut scan_progress = |event: ScanProgress| {
@@ -77,7 +80,7 @@ pub fn run_job(
 
     let summary = scan::scan_dirs(
         archive,
-        source,
+        &source_paths,
         Some(output),
         mode,
         cancel,
@@ -123,7 +126,10 @@ pub fn run_job(
         .map_err(|err| format!("无法创建输出目录 {}：{}", output.display(), err))?;
 
     let requested_move = config.copy_mode == "move";
-    let move_files = requested_move && same_volume(source, output);
+    let move_files = requested_move
+        && source_paths
+            .iter()
+            .all(|source| same_volume(source, output));
     if requested_move && !move_files {
         progress(Progress {
             stage: "notice".to_string(),
@@ -197,7 +203,7 @@ pub fn run_job(
         }
     }
 
-    match manifest::write_manifest(output, source, archive, mode, copy_mode, &summary) {
+    match manifest::write_manifest(output, &source_paths, archive, mode, copy_mode, &summary) {
         Ok(path) => progress(Progress {
             stage: "manifest".to_string(),
             message: format!("复查清单: {}", path),
@@ -329,8 +335,11 @@ pub fn run_job(
         match verify::verify_items(
             output,
             &summary.unique_items,
+            &summary.archive_records,
+            &summary.source_records,
+            &source_paths,
+            &summary.project,
             mode,
-            source,
             copy_mode,
             summary.archived,
         ) {
@@ -498,6 +507,8 @@ mod tests {
         let copy_item = UniqueFile {
             path: source.join("copy.txt"),
             relative: PathBuf::from("copy.txt"),
+            source_root: source.clone(),
+            source_relative: PathBuf::from("copy.txt"),
             size: 12,
             key: "k1".to_string(),
         };
@@ -508,6 +519,8 @@ mod tests {
         let move_item = UniqueFile {
             path: source.join("move.txt"),
             relative: PathBuf::from("move.txt"),
+            source_root: source.clone(),
+            source_relative: PathBuf::from("move.txt"),
             size: 12,
             key: "k2".to_string(),
         };

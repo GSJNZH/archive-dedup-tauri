@@ -156,9 +156,14 @@ fn scan_library(config: JobConfig) -> Result<scan::ScanSummary, String> {
     };
     let cancel = AtomicBool::new(false);
     let mut noop = |_event: scan::ScanProgress| {};
+    let sources: Vec<PathBuf> = config
+        .source_paths()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
     scan::scan_dirs(
         Path::new(config.archive.trim()),
-        Path::new(config.source.trim()),
+        &sources,
         output.as_deref(),
         mode,
         &cancel,

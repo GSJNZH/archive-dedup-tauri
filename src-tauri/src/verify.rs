@@ -1,5 +1,5 @@
 use crate::model::{JobConfig, Progress};
-use crate::scan::{self, ScanMode, UniqueFile};
+use crate::scan::{self, ArchiveRecord, ScanMode, SourceRecord, UniqueFile};
 use chrono::Local;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -31,19 +31,17 @@ pub struct VerifyResult {
 pub fn verify_items(
     output: &Path,
     items: &[UniqueFile],
+    archive_records: &[ArchiveRecord],
+    source_records: &[SourceRecord],
+    sources: &[PathBuf],
+    project: &str,
     mode: ScanMode,
-    source: &Path,
     copy_mode: &str,
     archived: u64,
 ) -> Result<VerifyResult, String> {
     if !output.is_dir() {
         return Err(format!("输出目录不存在：{}", output.display()));
     }
-
-    let project = source
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "未命名项目".to_string());
 
     let mut expected: HashMap<String, &UniqueFile> = HashMap::new();
     for item in items {
@@ -60,6 +58,7 @@ pub fn verify_items(
     let mut missing_blocks = Vec::new();
     let mut mismatch_blocks = Vec::new();
     let mut extra_blocks = Vec::new();
+    let mut output_dir_lines = Vec::new();
 
     for entry in WalkDir::new(output).follow_links(false) {
         let entry = match entry {
@@ -100,6 +99,12 @@ pub fn verify_items(
                     format_size(size),
                     label
                 ));
+                output_dir_lines.push(format!(
+                    "[多余] {} | {} | {}",
+                    relative,
+                    format_size(size),
+                    label
+                ));
             }
             continue;
         };
@@ -109,24 +114,38 @@ pub fn verify_items(
         let source_label = scan::fingerprint_label(&item.key);
         match scan::fingerprint_file(entry.path(), size, mode) {
             Ok(actual) if actual == item.key => {
+                let actual_label = scan::fingerprint_label(&actual);
                 ok_blocks.push(format!(
                     "[一致] {}\n       源文件  {}  {}\n       输出    {}  {}",
                     relative,
                     format_size(item.size),
                     source_label,
                     format_size(size),
-                    scan::fingerprint_label(&actual)
+                    actual_label
+                ));
+                output_dir_lines.push(format!(
+                    "[一致] {} | {} | {}",
+                    relative,
+                    format_size(size),
+                    actual_label
                 ));
             }
             Ok(actual) => {
                 mismatched += 1;
+                let actual_label = scan::fingerprint_label(&actual);
                 mismatch_blocks.push(format!(
                     "[不一致] {}\n       源文件  {}  {}\n       输出    {}  {}\n       说明    输出文件内容与扫描时的源文件不一致",
                     relative,
                     format_size(item.size),
                     source_label,
                     format_size(size),
-                    scan::fingerprint_label(&actual)
+                    actual_label
+                ));
+                output_dir_lines.push(format!(
+                    "[不一致] {} | {} | {}",
+                    relative,
+                    format_size(size),
+                    actual_label
                 ));
             }
             Err(err) => {
@@ -137,6 +156,12 @@ pub fn verify_items(
                     relative,
                     format_size(item.size),
                     source_label,
+                    err
+                ));
+                output_dir_lines.push(format!(
+                    "[不一致] {} | {} | 无法读取：{}",
+                    relative,
+                    format_size(size),
                     err
                 ));
             }
@@ -178,7 +203,55 @@ pub fn verify_items(
         blocks.push("没有文件需要校验。".to_string());
     }
     let details_text = blocks.join("\n\n");
-    let collection = sha256_hex(details_text.as_bytes());
+
+    let archive_values = if archive_records.is_empty() {
+        "未发现归档文件。".to_string()
+    } else {
+        archive_records
+            .iter()
+            .map(|record| {
+                format!(
+                    "[归档] {} | {} | {}",
+                    record.relative,
+                    format_size(record.size),
+                    scan::fingerprint_label(&record.key)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let source_values = if source_records.is_empty() {
+        "未发现原素材文件。".to_string()
+    } else {
+        source_records
+            .iter()
+            .map(|record| {
+                format!(
+                    "[{}] {}\\{} | {} | {}",
+                    if record.archived {
+                        "已归档"
+                    } else {
+                        "未归档"
+                    },
+                    record.source_root.display(),
+                    record.source_relative,
+                    format_size(record.size),
+                    scan::fingerprint_label(&record.key)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let output_values = if output_dir_lines.is_empty() {
+        "未发现输出文件。".to_string()
+    } else {
+        output_dir_lines.join("\n")
+    };
+    let collection_payload = format!(
+        "{}\n\n[归档目录]\n{}\n\n[原素材目录]\n{}\n\n[输出目录]\n{}",
+        details_text, archive_values, source_values, output_values
+    );
+    let collection = sha256_hex(collection_payload.as_bytes());
 
     let (status, conclusion) = if ok {
         if extra == 0 {
@@ -206,6 +279,15 @@ pub fn verify_items(
         ScanMode::Fast => "文件大小 + 头 64KB MD5 + 尾 64KB MD5",
         ScanMode::Exact => "文件大小 + 全量 MD5",
     };
+    let source_list_text = if sources.is_empty() {
+        "未设置".to_string()
+    } else {
+        sources
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n            ")
+    };
 
     let mut report = String::new();
     report.push_str("======================================================================\n");
@@ -225,7 +307,7 @@ pub fn verify_items(
     report.push_str(&format!("项目地址    {}\n", PROJECT_URL));
     report.push_str(&format!("比对模式    {}\n", mode_label));
     report.push_str(&format!("处理方式    {}\n", copy_label));
-    report.push_str(&format!("原素材目录  {}\n", source.display()));
+    report.push_str(&format!("原素材目录  {}\n", source_list_text));
     report.push_str(&format!("输出目录    {}\n", output.display()));
     report.push('\n');
     report.push_str("二、校验结果\n");
@@ -240,12 +322,24 @@ pub fn verify_items(
     report.push_str(&format!("通过率          {:.1}%\n", rate));
     report.push_str(&format!("应校验总大小    {}\n", format_size(total_bytes)));
     report.push('\n');
-    report.push_str("三、逐文件核对\n");
+    report.push_str("三、复制对账（未归档文件 → 输出）\n");
     report.push_str("----------------------------------------------------------------------\n");
     report.push_str(&details_text);
     report.push('\n');
+    report.push_str("四、归档目录文件校验值\n");
     report.push_str("----------------------------------------------------------------------\n");
-    report.push_str("四、校验说明\n");
+    report.push_str(&archive_values);
+    report.push('\n');
+    report.push_str("五、原素材目录文件校验值\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&source_values);
+    report.push('\n');
+    report.push_str("六、输出目录文件校验值\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&output_values);
+    report.push('\n');
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str("七、校验说明\n");
     report.push_str("----------------------------------------------------------------------\n");
     report.push_str(&format!("本次使用 {} 比对。\n", method));
     report.push_str("“一致”表示输出文件的大小和指纹与扫描时记录的源文件完全相同。\n");
@@ -279,7 +373,7 @@ pub fn verify_items(
         total_bytes,
         report: report_path.display().to_string(),
         errors,
-        project,
+        project: project.to_string(),
     })
 }
 
@@ -290,12 +384,13 @@ pub fn verify_only(
 ) -> Result<VerifyResult, String> {
     let mode = ScanMode::parse(&config.mode)?;
     let archive = Path::new(config.archive.trim());
-    let source = Path::new(config.source.trim());
+    let source_paths: Vec<PathBuf> = config
+        .source_paths()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
     let output = Path::new(config.output.trim());
-    if archive.as_os_str().is_empty()
-        || source.as_os_str().is_empty()
-        || output.as_os_str().is_empty()
-    {
+    if archive.as_os_str().is_empty() || source_paths.is_empty() || output.as_os_str().is_empty() {
         return Err("归档目录、原素材目录和输出目录都不能为空。".to_string());
     }
 
@@ -313,7 +408,7 @@ pub fn verify_only(
     };
     let summary = scan::scan_dirs(
         archive,
-        source,
+        &source_paths,
         Some(output),
         mode,
         cancel,
@@ -337,8 +432,11 @@ pub fn verify_only(
     let result = verify_items(
         output,
         &summary.unique_items,
+        &summary.archive_records,
+        &summary.source_records,
+        &source_paths,
+        &summary.project,
         mode,
-        source,
         &config.copy_mode,
         summary.archived,
     )?;
@@ -429,10 +527,24 @@ mod tests {
         let items = vec![UniqueFile {
             path: output.join("a.txt"),
             relative: PathBuf::from("a.txt"),
+            source_root: root.clone(),
+            source_relative: PathBuf::from("a.txt"),
             size: 3,
             key: key.clone(),
         }];
-        let result = verify_items(&output, &items, ScanMode::Fast, &root, "copy", 0).unwrap();
+        let sources = vec![root.clone()];
+        let result = verify_items(
+            &output,
+            &items,
+            &[],
+            &[],
+            &sources,
+            "test",
+            ScanMode::Fast,
+            "copy",
+            0,
+        )
+        .unwrap();
         assert!(result.ok);
         assert_eq!(result.checked, 1);
         assert_eq!(result.missing, 0);
@@ -446,11 +558,23 @@ mod tests {
         let missing_items = vec![UniqueFile {
             path: output.join("missing.txt"),
             relative: PathBuf::from("missing.txt"),
+            source_root: root.clone(),
+            source_relative: PathBuf::from("missing.txt"),
             size: 3,
             key,
         }];
-        let result =
-            verify_items(&output, &missing_items, ScanMode::Fast, &root, "copy", 0).unwrap();
+        let result = verify_items(
+            &output,
+            &missing_items,
+            &[],
+            &[],
+            &sources,
+            "test",
+            ScanMode::Fast,
+            "copy",
+            0,
+        )
+        .unwrap();
         assert!(!result.ok);
         assert_eq!(result.missing, 1);
         fs::remove_dir_all(root).unwrap();

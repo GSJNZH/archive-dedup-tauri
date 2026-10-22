@@ -18,6 +18,122 @@
     output: "D:\\Footage\\外国语学校-6.11\\09_04-未使用画面",
   };
 
+  function sourceInputs() {
+    return Array.from(document.querySelectorAll(".source-path"));
+  }
+
+  function sourcePaths() {
+    return sourceInputs().map((input) => input.value.trim()).filter(Boolean);
+  }
+
+  function defaultOutput(source) {
+    return source ? source + "\\09_04-未使用画面" : "";
+  }
+
+  function bindSourceRow(row, index) {
+    row.querySelector("[data-source-pick]").addEventListener("click", () => pickSource(index));
+    row.querySelector("[data-source-open]").addEventListener("click", () => openSource(index));
+    row.querySelector("[data-source-remove]").addEventListener("click", () => removeSource(index));
+    row.querySelector(".source-path").addEventListener("change", (event) => {
+      if (!$("outputPath").value.trim() && event.target.value.trim()) {
+        $("outputPath").value = defaultOutput(event.target.value.trim());
+      }
+    });
+  }
+
+  function renderSources(paths) {
+    const list = $("sourceList");
+    list.innerHTML = "";
+    const values = paths.length ? paths : [""];
+    values.forEach((path, index) => {
+      const row = document.createElement("div");
+      row.className = "path-row source-row";
+      const label = document.createElement("label");
+      label.textContent = "素材 " + (index + 1);
+      const input = document.createElement("input");
+      input.className = "source-path";
+      input.type = "text";
+      input.spellcheck = false;
+      input.placeholder = index === 0 ? "选择相机原素材目录" : "添加另一个原素材目录";
+      input.value = path;
+      const pick = document.createElement("button");
+      pick.className = "btn subtle";
+      pick.type = "button";
+      pick.textContent = "浏览";
+      pick.dataset.sourcePick = String(index);
+      const open = document.createElement("button");
+      open.className = "btn ghost";
+      open.type = "button";
+      open.textContent = "打开";
+      open.dataset.sourceOpen = String(index);
+      const remove = document.createElement("button");
+      remove.className = "btn ghost remove";
+      remove.type = "button";
+      remove.title = "移除这个原素材文件夹";
+      remove.textContent = "×";
+      remove.dataset.sourceRemove = String(index);
+      row.append(label, input, pick, open, remove);
+      list.appendChild(row);
+      bindSourceRow(row, index);
+    });
+  }
+
+  function addSource() {
+    if (state.running) return;
+    const paths = sourceInputs().map((input) => input.value);
+    paths.push("");
+    renderSources(paths);
+    const inputs = sourceInputs();
+    inputs[inputs.length - 1].focus();
+  }
+
+  function removeSource(index) {
+    if (state.running) return;
+    const paths = sourceInputs().map((input) => input.value);
+    if (paths.length <= 1) return;
+    paths.splice(index, 1);
+    renderSources(paths);
+  }
+
+  async function pickSource(index) {
+    if (state.running) return;
+    const input = sourceInputs()[index];
+    if (!input) return;
+    if (isTauri) {
+      try {
+        const path = await window.__TAURI__.core.invoke("pick_folder", { title: "选择原素材文件夹" });
+        if (path) {
+          input.value = path;
+          if (!$("outputPath").value.trim()) $("outputPath").value = defaultOutput(path);
+          log("已选择原素材文件夹：" + path, "muted");
+        }
+      } catch (err) {
+        log("选择目录失败：" + err, "err");
+      }
+    } else {
+      input.value = demoPaths.source;
+      if (!$("outputPath").value.trim()) $("outputPath").value = defaultOutput(demoPaths.source);
+      log("演示模式：已填入示例路径。", "muted");
+    }
+  }
+
+  async function openSource(index) {
+    const input = sourceInputs()[index];
+    if (!input || !input.value.trim()) {
+      log("路径为空，无法打开。", "warn");
+      return;
+    }
+    if (isTauri) {
+      try {
+        await window.__TAURI__.core.invoke("open_path", { path: input.value.trim() });
+      } catch (err) {
+        log("打开目录失败：" + err, "err");
+      }
+    } else {
+      log("演示模式：将打开 " + input.value.trim(), "muted");
+    }
+  }
+
   function now() {
     const d = new Date();
     return [d.getHours(), d.getMinutes(), d.getSeconds()]
@@ -74,9 +190,11 @@
   }
 
   function gatherConfig() {
+    const sources = sourcePaths();
     return {
       archive: $("archivePath").value.trim(),
-      source: $("sourcePath").value.trim(),
+      sources,
+      source: sources[0] || "",
       output: $("outputPath").value.trim(),
       mode: state.mode,
       copy_mode: state.copyMode,
@@ -87,8 +205,8 @@
   }
 
   function validate(config) {
-    if (!config.archive || !config.source || !config.output) {
-      log("请先选择归档文件夹、原素材文件夹和输出文件夹。", "warn");
+    if (!config.archive || !config.sources.length || !config.output) {
+      log("请先选择归档文件夹、至少一个原素材文件夹和输出文件夹。", "warn");
       return false;
     }
     return true;
@@ -96,15 +214,12 @@
 
   async function pick(kind) {
     if (state.running) return;
-    const titles = { archive: "选择归档文件夹", source: "选择原素材文件夹", output: "选择输出文件夹" };
+    const titles = { archive: "选择归档文件夹", output: "选择输出文件夹" };
     if (isTauri) {
       try {
         const path = await window.__TAURI__.core.invoke("pick_folder", { title: titles[kind] });
         if (path) {
           $(kind + "Path").value = path;
-          if (kind === "source" && !$("outputPath").value.trim()) {
-            $("outputPath").value = path + "\\09_04-未使用画面";
-          }
           log("已选择 " + titles[kind] + "：" + path, "muted");
         }
       } catch (err) {
@@ -112,7 +227,6 @@
       }
     } else {
       $(kind + "Path").value = demoPaths[kind];
-      if (kind === "source") $("outputPath").value = demoPaths.output;
       log("演示模式：已填入示例路径。", "muted");
     }
   }
@@ -314,15 +428,18 @@
 
     if (!isTauri) {
       $("archivePath").value = demoPaths.archive;
-      $("sourcePath").value = demoPaths.source;
       $("outputPath").value = demoPaths.output;
+      renderSources([demoPaths.source]);
       log("素材归档去重工具 v1.3.0 已就绪。", "accent");
       log("当前是浏览器预览，使用演示数据；打包后会调用 Rust 核心。", "muted");
       log("默认：同盘移动 / 8 线程（SSD）。移动会移除原素材中的未归档文件。", "warn");
     } else {
+      renderSources([""]);
       log("素材归档去重工具 v1.3.0 已就绪。", "accent");
       log("Rust 核心已连接。", "muted");
     }
+
+    $("addSource").addEventListener("click", addSource);
 
     document.querySelectorAll("[data-pick]").forEach((button) => {
       button.addEventListener("click", () => pick(button.dataset.pick));

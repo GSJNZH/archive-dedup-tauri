@@ -1,6 +1,6 @@
 use md5::{Digest, Md5};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -55,15 +55,36 @@ pub struct ScanProgress {
 }
 
 #[derive(Debug, Clone)]
+pub struct ArchiveRecord {
+    pub relative: String,
+    pub size: u64,
+    pub key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceRecord {
+    pub source_root: PathBuf,
+    pub source_relative: String,
+    pub output_relative: String,
+    pub size: u64,
+    pub key: String,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct UniqueFile {
     pub path: PathBuf,
+    /// 输出目录中的相对路径
     pub relative: PathBuf,
+    pub source_root: PathBuf,
+    pub source_relative: PathBuf,
     pub size: u64,
     pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanSummary {
+    pub project: String,
     pub archived: u64,
     pub unique: u64,
     pub total: u64,
@@ -74,6 +95,10 @@ pub struct ScanSummary {
     pub unique_files: Vec<String>,
     #[serde(skip)]
     pub unique_items: Vec<UniqueFile>,
+    #[serde(skip)]
+    pub archive_records: Vec<ArchiveRecord>,
+    #[serde(skip)]
+    pub source_records: Vec<SourceRecord>,
     pub errors: Vec<String>,
     pub elapsed_ms: u64,
     pub mode: String,
@@ -87,7 +112,7 @@ struct FileEntry {
 
 pub fn scan_dirs(
     archive: &Path,
-    source: &Path,
+    sources: &[PathBuf],
     output: Option<&Path>,
     mode: ScanMode,
     cancel: &AtomicBool,
@@ -95,20 +120,58 @@ pub fn scan_dirs(
 ) -> Result<ScanSummary, String> {
     let started = Instant::now();
     let archive = canonical_or_absolute(archive);
-    let source = canonical_or_absolute(source);
     let skip = output.map(canonical_or_absolute);
 
     if !archive.is_dir() {
         return Err(format!("归档文件夹不存在：{}", archive.display()));
     }
-    if !source.is_dir() {
-        return Err(format!("原素材文件夹不存在：{}", source.display()));
+    if sources.is_empty() {
+        return Err("至少需要一个原素材文件夹。".to_string());
     }
+
+    let mut source_roots = Vec::new();
+    for source in sources {
+        let root = canonical_or_absolute(source);
+        if !root.is_dir() {
+            return Err(format!("原素材文件夹不存在：{}", root.display()));
+        }
+        source_roots.push(root);
+    }
+
+    let mut base_counts: HashMap<String, u32> = HashMap::new();
+    let mut source_prefixes = Vec::new();
+    for root in &source_roots {
+        let base = root
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "source".to_string());
+        let count = base_counts.entry(base.clone()).or_insert(0);
+        *count += 1;
+        source_prefixes.push(if *count > 1 {
+            format!("{}_{}", base, *count)
+        } else {
+            base
+        });
+    }
+
+    let multiple_sources = source_roots.len() > 1;
+    let project = if source_roots.len() == 1 {
+        source_roots[0]
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名项目".to_string())
+    } else {
+        archive
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "多素材项目".to_string())
+    };
 
     let mut errors = Vec::new();
     let archive_files = collect_files(&archive, skip.as_deref(), &mut errors);
     let archive_total = archive_files.len() as u64;
     let mut archive_keys: HashSet<String> = HashSet::new();
+    let mut archive_records = Vec::new();
 
     for (index, entry) in archive_files.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -116,15 +179,20 @@ pub fn scan_dirs(
         }
         match fingerprint(entry, mode) {
             Ok(key) => {
-                archive_keys.insert(key);
+                archive_keys.insert(key.clone());
+                archive_records.push(ArchiveRecord {
+                    relative: relative_text(&archive, &entry.path),
+                    size: entry.size,
+                    key,
+                });
             }
             Err(err) => push_error(&mut errors, format!("{}: {}", entry.path.display(), err)),
         }
         if index % 10 == 0 || index + 1 == archive_files.len() {
             let percent = if archive_total == 0 {
-                40.0
+                30.0
             } else {
-                ((index as f64 + 1.0) / archive_total as f64) * 40.0
+                ((index as f64 + 1.0) / archive_total as f64) * 30.0
             };
             progress(ScanProgress {
                 stage: "scan-archive".to_string(),
@@ -139,37 +207,61 @@ pub fn scan_dirs(
         }
     }
 
-    let source_files = collect_files(&source, skip.as_deref(), &mut errors);
-    let source_total = source_files.len() as u64;
-    let source_bytes: u64 = source_files.iter().map(|entry| entry.size).sum();
+    let mut source_entries: Vec<(usize, FileEntry)> = Vec::new();
+    for (index, root) in source_roots.iter().enumerate() {
+        for entry in collect_files(root, skip.as_deref(), &mut errors) {
+            source_entries.push((index, entry));
+        }
+    }
+
+    let source_total = source_entries.len() as u64;
+    let source_bytes: u64 = source_entries.iter().map(|(_, entry)| entry.size).sum();
     let mut archived = 0u64;
     let mut unique = 0u64;
     let mut archived_bytes = 0u64;
     let mut unique_bytes = 0u64;
     let mut unique_files = Vec::new();
     let mut unique_items = Vec::new();
+    let mut source_records = Vec::new();
 
-    for (index, entry) in source_files.iter().enumerate() {
+    for (index, (source_index, entry)) in source_entries.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
             return Err("已取消".to_string());
         }
+        let source_root = &source_roots[*source_index];
         match fingerprint(entry, mode) {
             Ok(key) => {
-                if archive_keys.contains(&key) {
+                let source_relative = entry
+                    .path
+                    .strip_prefix(source_root)
+                    .unwrap_or(&entry.path)
+                    .to_path_buf();
+                let output_relative = if multiple_sources {
+                    PathBuf::from(&source_prefixes[*source_index]).join(&source_relative)
+                } else {
+                    source_relative.clone()
+                };
+                let is_archived = archive_keys.contains(&key);
+                source_records.push(SourceRecord {
+                    source_root: source_root.clone(),
+                    source_relative: source_relative.to_string_lossy().to_string(),
+                    output_relative: output_relative.to_string_lossy().to_string(),
+                    size: entry.size,
+                    key: key.clone(),
+                    archived: is_archived,
+                });
+                if is_archived {
                     archived += 1;
                     archived_bytes += entry.size;
                 } else {
                     unique += 1;
                     unique_bytes += entry.size;
-                    let relative = entry
-                        .path
-                        .strip_prefix(&source)
-                        .unwrap_or(&entry.path)
-                        .to_path_buf();
-                    unique_files.push(relative.to_string_lossy().to_string());
+                    unique_files.push(output_relative.to_string_lossy().to_string());
                     unique_items.push(UniqueFile {
                         path: entry.path.clone(),
-                        relative,
+                        relative: output_relative,
+                        source_root: source_root.clone(),
+                        source_relative,
                         size: entry.size,
                         key,
                     });
@@ -177,7 +269,7 @@ pub fn scan_dirs(
             }
             Err(err) => push_error(&mut errors, format!("{}: {}", entry.path.display(), err)),
         }
-        if index % 10 == 0 || index + 1 == source_files.len() {
+        if index % 10 == 0 || index + 1 == source_entries.len() {
             let fraction = if source_total == 0 {
                 1.0
             } else {
@@ -186,7 +278,7 @@ pub fn scan_dirs(
             progress(ScanProgress {
                 stage: "scan-source".to_string(),
                 message: format!("比对原素材 {}/{}", index + 1, source_total),
-                percent: 40.0 + fraction * 60.0,
+                percent: 30.0 + fraction * 70.0,
                 archived,
                 unique,
                 size_gb: gb(unique_bytes),
@@ -202,6 +294,7 @@ pub fn scan_dirs(
 
     unique_files.sort();
     let summary = ScanSummary {
+        project,
         archived,
         unique,
         total: source_total,
@@ -211,6 +304,8 @@ pub fn scan_dirs(
         size_gb: gb(unique_bytes),
         unique_files,
         unique_items,
+        archive_records,
+        source_records,
         errors,
         elapsed_ms: started.elapsed().as_millis() as u64,
         mode: mode.label().to_string(),
@@ -398,6 +493,13 @@ fn is_under(path: &Path, root: &Path) -> bool {
     path.as_str() == root || path.starts_with(prefix.as_str())
 }
 
+fn relative_text(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
 fn gb(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
@@ -456,8 +558,15 @@ mod tests {
         for mode in [ScanMode::Fast, ScanMode::Exact] {
             let cancel = AtomicBool::new(false);
             let mut noop = |_event: ScanProgress| {};
-            let summary =
-                scan_dirs(&archive, &source, Some(&output), mode, &cancel, &mut noop).unwrap();
+            let summary = scan_dirs(
+                &archive,
+                std::slice::from_ref(&source),
+                Some(&output),
+                mode,
+                &cancel,
+                &mut noop,
+            )
+            .unwrap();
             assert_eq!(summary.archived, 1);
             assert_eq!(summary.unique, 1);
             assert_eq!(summary.unique_files, vec!["u.bin".to_string()]);
