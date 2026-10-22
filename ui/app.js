@@ -250,10 +250,6 @@
 
   async function verifyOutput() {
     if (state.running) return;
-    if (isTauri) {
-      log("校验功能将在 Phase 3 接入；当前版本只完成扫描、复制/移动。", "warn");
-      return;
-    }
     const config = gatherConfig();
     if (!config.output) {
       log("请先选择输出文件夹。", "warn");
@@ -302,6 +298,7 @@
         $("runDot").className = "dot error";
         setStatus(p.message || "任务失败", 100);
         log(p.message || "任务失败", "err");
+        if (p.report) log("校验报告: " + p.report, "muted");
         return;
       }
       setStatus(p.message || "任务完成", 100);

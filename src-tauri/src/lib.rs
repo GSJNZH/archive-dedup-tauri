@@ -1,6 +1,7 @@
 mod job;
 mod model;
 mod scan;
+mod verify;
 
 use model::{JobConfig, JobDone, Progress};
 use std::path::{Path, PathBuf};
@@ -61,38 +62,6 @@ fn open_path(path: String) -> Result<(), String> {
     Err("当前平台不支持打开目录".to_string())
 }
 
-fn demo_progress(app: &AppHandle, stage: &str, message: impl Into<String>, percent: f64) {
-    let _ = app.emit(
-        "job-progress",
-        Progress {
-            stage: stage.to_string(),
-            message: message.into(),
-            percent,
-            archived: 71,
-            unique: 71,
-            size_gb: "28.1".to_string(),
-            copied: 0,
-            failed: 0,
-        },
-    );
-}
-
-fn demo_done(app: &AppHandle, ok: bool, message: impl Into<String>, report: String) {
-    let _ = app.emit(
-        "job-done",
-        JobDone {
-            ok,
-            message: message.into(),
-            report,
-            archived: 71,
-            unique: 71,
-            size_gb: "28.1".to_string(),
-            copied: 0,
-            failed: 0,
-        },
-    );
-}
-
 #[tauri::command]
 fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> Result<(), String> {
     if state.running.swap(true, Ordering::SeqCst) {
@@ -133,12 +102,19 @@ fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> R
                 if result.failed > 0 {
                     message.push_str("；详见日志");
                 }
+                if result.verified {
+                    message.push_str(if result.verify_ok {
+                        "；校验通过"
+                    } else {
+                        "；校验未通过"
+                    });
+                }
                 let _ = app.emit(
                     "job-done",
                     JobDone {
-                        ok: true,
+                        ok: !result.verified || result.verify_ok,
                         message,
-                        report: String::new(),
+                        report: result.report,
                         archived: result.archived,
                         unique: result.unique,
                         size_gb: result.size_gb,
@@ -204,24 +180,52 @@ fn verify_output(
     let cancel = state.cancel.clone();
 
     std::thread::spawn(move || {
-        let total = 5u32;
-        for step in 0..=total {
-            if cancel.load(Ordering::SeqCst) {
-                running.store(false, Ordering::SeqCst);
-                demo_done(&app, false, "校验已取消", config.output);
-                return;
-            }
-            let percent = (step as f64 / total as f64) * 100.0;
-            demo_progress(
-                &app,
-                "verify",
-                format!("校验骨架 {}/{}", step, total),
-                percent,
-            );
-            std::thread::sleep(std::time::Duration::from_millis(180));
-        }
+        let progress_app = app.clone();
+        let mut on_progress = |event: Progress| {
+            let _ = progress_app.emit("job-progress", event);
+        };
+        let result = verify::verify_only(&config, &cancel, &mut on_progress);
         running.store(false, Ordering::SeqCst);
-        demo_done(&app, true, "Rust 校验骨架完成（演示）", config.output);
+
+        match result {
+            Ok(result) => {
+                let message = format!(
+                    "校验{}：缺失 {}，不一致 {}，多余 {}",
+                    if result.ok { "通过" } else { "未通过" },
+                    result.missing,
+                    result.mismatched,
+                    result.extra
+                );
+                let _ = app.emit(
+                    "job-done",
+                    JobDone {
+                        ok: result.ok,
+                        message,
+                        report: result.report,
+                        archived: result.archived,
+                        unique: result.unique,
+                        size_gb: "0.0".to_string(),
+                        copied: 0,
+                        failed: result.missing + result.mismatched,
+                    },
+                );
+            }
+            Err(err) => {
+                let _ = app.emit(
+                    "job-done",
+                    JobDone {
+                        ok: false,
+                        message: err,
+                        report: String::new(),
+                        archived: 0,
+                        unique: 0,
+                        size_gb: "0.0".to_string(),
+                        copied: 0,
+                        failed: 0,
+                    },
+                );
+            }
+        }
     });
 
     Ok(())

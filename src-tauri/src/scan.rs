@@ -266,31 +266,57 @@ fn collect_files(root: &Path, skip: Option<&Path>, errors: &mut Vec<String>) -> 
 }
 
 fn fingerprint(entry: &FileEntry, mode: ScanMode) -> Result<String, String> {
+    fingerprint_file(&entry.path, entry.size, mode)
+}
+
+pub fn fingerprint_file(path: &Path, size: u64, mode: ScanMode) -> Result<String, String> {
     match mode {
         ScanMode::Turbo => {
-            let mtime = fs::metadata(&entry.path)
+            let mtime = fs::metadata(path)
                 .and_then(|metadata| metadata.modified())
                 .ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_nanos())
                 .unwrap_or(0);
-            Ok(format!("t:{}:{}", entry.size, mtime))
+            Ok(format!("t:{}:{}", size, mtime))
         }
         ScanMode::Fast => {
-            let mut file = File::open(&entry.path).map_err(|err| err.to_string())?;
-            let head_len = entry.size.min(SAMPLE_SIZE);
-            let tail_len = entry.size.min(SAMPLE_SIZE);
+            let mut file = File::open(path).map_err(|err| err.to_string())?;
+            let head_len = size.min(SAMPLE_SIZE);
+            let tail_len = size.min(SAMPLE_SIZE);
             let head = hash_range(&mut file, 0, head_len).map_err(|err| err.to_string())?;
-            let tail_start = entry.size.saturating_sub(tail_len);
+            let tail_start = size.saturating_sub(tail_len);
             let tail =
                 hash_range(&mut file, tail_start, tail_len).map_err(|err| err.to_string())?;
-            Ok(format!("f:{}:{}:{}", entry.size, head, tail))
+            Ok(format!("f:{}:{}:{}", size, head, tail))
         }
         ScanMode::Exact => {
-            let mut file = File::open(&entry.path).map_err(|err| err.to_string())?;
+            let mut file = File::open(path).map_err(|err| err.to_string())?;
             let hash = hash_stream(&mut file).map_err(|err| err.to_string())?;
-            Ok(format!("e:{}:{}", entry.size, hash))
+            Ok(format!("e:{}:{}", size, hash))
         }
+    }
+}
+
+pub fn fingerprint_label(key: &str) -> String {
+    if let Some(rest) = key.strip_prefix("f:") {
+        let mut parts = rest.splitn(3, ':');
+        let size = parts.next().unwrap_or("0");
+        let head = parts.next().unwrap_or("");
+        let tail = parts.next().unwrap_or("");
+        format!("fp=MD5({}|{}|{})", size, head, tail)
+    } else if let Some(rest) = key.strip_prefix("e:") {
+        let mut parts = rest.splitn(2, ':');
+        let _size = parts.next().unwrap_or("0");
+        let hash = parts.next().unwrap_or("");
+        format!("md5={}", hash)
+    } else if let Some(rest) = key.strip_prefix("t:") {
+        let mut parts = rest.splitn(2, ':');
+        let size = parts.next().unwrap_or("0");
+        let mtime = parts.next().unwrap_or("0");
+        format!("size={} mtime={}", size, mtime)
+    } else {
+        key.to_string()
     }
 }
 

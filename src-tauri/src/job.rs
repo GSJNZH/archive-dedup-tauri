@@ -1,5 +1,6 @@
 use crate::model::{JobConfig, Progress};
 use crate::scan::{self, ScanMode, ScanProgress, UniqueFile};
+use crate::verify;
 use filetime::{set_file_mtime, FileTime};
 use std::collections::VecDeque;
 use std::fs;
@@ -20,6 +21,12 @@ pub struct JobResult {
     pub elapsed_ms: u64,
     pub dry_run: bool,
     pub errors: Vec<String>,
+    pub report: String,
+    pub verified: bool,
+    pub verify_ok: bool,
+    pub missing: u64,
+    pub mismatched: u64,
+    pub extra: u64,
 }
 
 struct WorkerMessage {
@@ -88,6 +95,12 @@ pub fn run_job(
             elapsed_ms: started.elapsed().as_millis() as u64,
             dry_run: true,
             errors: summary.errors.clone(),
+            report: String::new(),
+            verified: false,
+            verify_ok: false,
+            missing: 0,
+            mismatched: 0,
+            extra: 0,
         };
         progress(Progress {
             stage: "done".to_string(),
@@ -136,6 +149,12 @@ pub fn run_job(
             elapsed_ms: started.elapsed().as_millis() as u64,
             dry_run: false,
             errors: summary.errors.clone(),
+            report: String::new(),
+            verified: false,
+            verify_ok: false,
+            missing: 0,
+            mismatched: 0,
+            extra: 0,
         };
         progress(Progress {
             stage: "done".to_string(),
@@ -160,6 +179,8 @@ pub fn run_job(
     let mut done = 0u64;
     let mut errors = Vec::new();
     let action = if move_files { "移动" } else { "复制" };
+    let copy_mode = if move_files { "move" } else { "copy" };
+    let copy_ceiling = if config.auto_verify { 90.0 } else { 100.0 };
     let mut last_emit = Instant::now();
 
     std::thread::scope(|scope| {
@@ -221,7 +242,7 @@ pub fn run_job(
 
             if last_emit.elapsed() >= Duration::from_millis(120) || done == total as u64 {
                 last_emit = Instant::now();
-                let percent = 50.0 + (done as f64 / total as f64) * 50.0;
+                let percent = 50.0 + (done as f64 / total as f64) * (copy_ceiling - 50.0);
                 progress(Progress {
                     stage: "copy".to_string(),
                     message: format!(
@@ -247,6 +268,47 @@ pub fn run_job(
         return Err("已取消".to_string());
     }
 
+    let mut report = String::new();
+    let mut verified = false;
+    let mut verify_ok = false;
+    let mut missing = 0u64;
+    let mut mismatched = 0u64;
+    let mut extra = 0u64;
+
+    if config.auto_verify {
+        progress(Progress {
+            stage: "verify".to_string(),
+            message: "正在校验输出目录…".to_string(),
+            percent: 92.0,
+            archived: summary.archived,
+            unique: summary.unique,
+            size_gb: summary.size_gb.clone(),
+            copied,
+            failed,
+        });
+        match verify::verify_items(
+            output,
+            &summary.unique_items,
+            mode,
+            source,
+            copy_mode,
+            summary.archived,
+        ) {
+            Ok(result) => {
+                report = result.report;
+                verified = true;
+                verify_ok = result.ok;
+                missing = result.missing;
+                mismatched = result.mismatched;
+                extra = result.extra;
+                if !result.errors.is_empty() {
+                    errors.extend(result.errors);
+                }
+            }
+            Err(err) => errors.push(format!("校验失败：{}", err)),
+        }
+    }
+
     let result = JobResult {
         archived: summary.archived,
         unique: summary.unique,
@@ -254,18 +316,32 @@ pub fn run_job(
         failed,
         size_gb: summary.size_gb.clone(),
         output: output.display().to_string(),
-        copy_mode: if move_files { "move" } else { "copy" }.to_string(),
+        copy_mode: copy_mode.to_string(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         dry_run: false,
         errors,
+        report,
+        verified,
+        verify_ok,
+        missing,
+        mismatched,
+        extra,
     };
 
+    let mut message = format!(
+        "{}完成：成功 {}，失败 {}，{}",
+        action, result.copied, result.failed, result.size_gb
+    );
+    if result.verified {
+        message.push_str(if result.verify_ok {
+            "；校验通过"
+        } else {
+            "；校验未通过"
+        });
+    }
     progress(Progress {
         stage: "done".to_string(),
-        message: format!(
-            "{}完成：成功 {}，失败 {}，{}",
-            action, result.copied, result.failed, result.size_gb
-        ),
+        message,
         percent: 100.0,
         archived: result.archived,
         unique: result.unique,
