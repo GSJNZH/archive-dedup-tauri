@@ -187,17 +187,18 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: 10.5px;
 }
 .source-list { display: flex; flex-direction: column; }
-.source-row {
+.paths .source-row {
   grid-template-columns: 54px minmax(0, 1fr) auto auto auto;
 }
-.source-row .btn.remove {
+.paths .source-row .btn.remove {
+  grid-column: 5;
   height: 35px;
   width: 28px;
   padding: 0;
   color: var(--muted-2);
   font-size: 15px;
 }
-.source-row .btn.remove:hover { color: var(--red); background: rgba(255, 69, 58, 0.08); }
+.paths .source-row .btn.remove:hover { color: var(--red); background: rgba(255, 69, 58, 0.08); }
 
 .path-row {
   display: grid;
@@ -625,9 +626,9 @@ select:focus { border-color: rgba(10, 132, 255, 0.7); }
   .path-row input { grid-column: 1 / -1; }
   .path-row .btn.subtle { grid-column: 2; }
   .path-row .btn.ghost { grid-column: 3; }
-  .source-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
-  .source-row .btn.remove { grid-column: 4; }
-  .source-row .btn.ghost { grid-column: 3; }
+  .paths .source-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .paths .source-row .btn.remove { grid-column: 4; }
+  .paths .source-row .btn.ghost { grid-column: 3; }
   .option-label { width: 100%; }
   .switches { margin-left: 0; width: 100%; }
   .warning { white-space: normal; }
