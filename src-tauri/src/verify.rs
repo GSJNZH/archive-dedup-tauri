@@ -29,6 +29,7 @@ pub struct VerifyResult {
 }
 
 pub fn verify_items(
+    archive: &Path,
     output: &Path,
     items: &[UniqueFile],
     archive_records: &[ArchiveRecord],
@@ -307,6 +308,7 @@ pub fn verify_items(
     report.push_str(&format!("项目地址    {}\n", PROJECT_URL));
     report.push_str(&format!("比对模式    {}\n", mode_label));
     report.push_str(&format!("处理方式    {}\n", copy_label));
+    report.push_str(&format!("归档目录    {}\n", archive.display()));
     report.push_str(&format!("原素材目录  {}\n", source_list_text));
     report.push_str(&format!("输出目录    {}\n", output.display()));
     report.push('\n');
@@ -430,6 +432,7 @@ pub fn verify_only(
     });
 
     let result = verify_items(
+        archive,
         output,
         &summary.unique_items,
         &summary.archive_records,
@@ -534,6 +537,7 @@ mod tests {
         }];
         let sources = vec![root.clone()];
         let result = verify_items(
+            &root,
             &output,
             &items,
             &[],
@@ -564,6 +568,7 @@ mod tests {
             key,
         }];
         let result = verify_items(
+            &root,
             &output,
             &missing_items,
             &[],

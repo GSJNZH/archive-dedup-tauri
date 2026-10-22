@@ -575,4 +575,43 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn multiple_sources_are_scanned() {
+        let root = test_root("multi");
+        let archive = root.join("archive");
+        let source1 = root.join("CardA");
+        let source2 = root.join("CardB");
+        let output = root.join("output");
+        fs::create_dir_all(&archive).unwrap();
+        fs::create_dir_all(&source1).unwrap();
+        fs::create_dir_all(&source2).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(archive.join("archived.bin"), b"archived").unwrap();
+        fs::write(source1.join("archived.bin"), b"archived").unwrap();
+        fs::write(source2.join("unique-b.bin"), b"unique-b").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let mut noop = |_event: ScanProgress| {};
+        let summary = scan_dirs(
+            &archive,
+            &[source1.clone(), source2.clone()],
+            Some(&output),
+            ScanMode::Fast,
+            &cancel,
+            &mut noop,
+        )
+        .unwrap();
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.archived, 1);
+        assert_eq!(summary.unique, 1);
+        assert_eq!(summary.source_records.len(), 2);
+        assert!(summary
+            .unique_files
+            .iter()
+            .any(|path| path.ends_with("unique-b.bin")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

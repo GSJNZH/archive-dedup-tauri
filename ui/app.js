@@ -15,7 +15,7 @@
   const demoPaths = {
     archive: "D:\\Projects\\外国语学校\\09_03-项目打包",
     source: "D:\\Footage\\外国语学校-6.11",
-    output: "D:\\Footage\\外国语学校-6.11\\09_04-未使用画面",
+    output: "D:\\Footage\\09_04-未使用画面",
   };
 
   function sourceInputs() {
@@ -27,7 +27,11 @@
   }
 
   function defaultOutput(source) {
-    return source ? source + "\\09_04-未使用画面" : "";
+    const trimmed = (source || "").replace(/[\\/]+$/, "");
+    if (!trimmed) return "";
+    const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+    const parent = index > 0 ? trimmed.slice(0, index) : trimmed;
+    return parent + "\\09_04-未使用画面";
   }
 
   function bindSourceRow(row, index) {
@@ -425,6 +429,7 @@
   function init() {
     $("envBadge").textContent = isTauri ? "Tauri 已连接" : "UI 预览";
     $("footerState").textContent = isTauri ? "本地运行" : "浏览器预览 · 演示数据";
+    setStats(0, 0, "0.0");
 
     if (!isTauri) {
       $("archivePath").value = demoPaths.archive;

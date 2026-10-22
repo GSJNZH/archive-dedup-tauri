@@ -188,7 +188,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .source-list { display: flex; flex-direction: column; }
 .paths .source-row {
-  grid-template-columns: 54px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 92px minmax(0, 1fr) auto auto auto;
 }
 .paths .source-row .btn.remove {
   grid-column: 5;

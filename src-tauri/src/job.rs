@@ -333,6 +333,7 @@ pub fn run_job(
             failed,
         });
         match verify::verify_items(
+            archive,
             output,
             &summary.unique_items,
             &summary.archive_records,
