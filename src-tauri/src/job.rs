@@ -351,3 +351,54 @@ fn same_volume(_a: &Path, _b: &Path) -> bool {
 fn format_gb(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "archive-dedup-job-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn copy_and_move_transfer() {
+        let root = test_root("transfer");
+        let source = root.join("source");
+        let output = root.join("output");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("copy.txt"), b"copy-content").unwrap();
+        fs::write(source.join("move.txt"), b"move-content").unwrap();
+
+        let copy_item = UniqueFile {
+            path: source.join("copy.txt"),
+            relative: PathBuf::from("copy.txt"),
+            size: 12,
+            key: "k1".to_string(),
+        };
+        transfer(&copy_item, &output, false).unwrap();
+        assert!(source.join("copy.txt").exists());
+        assert_eq!(fs::read(output.join("copy.txt")).unwrap(), b"copy-content");
+
+        let move_item = UniqueFile {
+            path: source.join("move.txt"),
+            relative: PathBuf::from("move.txt"),
+            size: 12,
+            key: "k2".to_string(),
+        };
+        transfer(&move_item, &output, true).unwrap();
+        assert!(!source.join("move.txt").exists());
+        assert_eq!(fs::read(output.join("move.txt")).unwrap(), b"move-content");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}
