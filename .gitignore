@@ -6,6 +6,7 @@ node_modules/
 .preview/
 
 # Local preview artifacts
+dist/
 ui-preview.png
 *.log
 .DS_Store

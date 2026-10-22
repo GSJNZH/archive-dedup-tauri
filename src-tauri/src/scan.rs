@@ -54,6 +54,14 @@ pub struct ScanProgress {
     pub total: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct UniqueFile {
+    pub path: PathBuf,
+    pub relative: PathBuf,
+    pub size: u64,
+    pub key: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanSummary {
     pub archived: u64,
@@ -63,6 +71,8 @@ pub struct ScanSummary {
     pub unique_bytes: u64,
     pub size_gb: String,
     pub unique_files: Vec<String>,
+    #[serde(skip)]
+    pub unique_items: Vec<UniqueFile>,
     pub errors: Vec<String>,
     pub elapsed_ms: u64,
     pub mode: String,
@@ -135,6 +145,7 @@ pub fn scan_dirs(
     let mut archived_bytes = 0u64;
     let mut unique_bytes = 0u64;
     let mut unique_files = Vec::new();
+    let mut unique_items = Vec::new();
 
     for (index, entry) in source_files.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -148,7 +159,18 @@ pub fn scan_dirs(
                 } else {
                     unique += 1;
                     unique_bytes += entry.size;
-                    unique_files.push(relative_display(&source, &entry.path));
+                    let relative = entry
+                        .path
+                        .strip_prefix(&source)
+                        .unwrap_or(&entry.path)
+                        .to_path_buf();
+                    unique_files.push(relative.to_string_lossy().to_string());
+                    unique_items.push(UniqueFile {
+                        path: entry.path.clone(),
+                        relative,
+                        size: entry.size,
+                        key,
+                    });
                 }
             }
             Err(err) => push_error(&mut errors, format!("{}: {}", entry.path.display(), err)),
@@ -185,6 +207,7 @@ pub fn scan_dirs(
         unique_bytes,
         size_gb: gb(unique_bytes),
         unique_files,
+        unique_items,
         errors,
         elapsed_ms: started.elapsed().as_millis() as u64,
         mode: mode.label().to_string(),
@@ -344,13 +367,6 @@ fn is_under(path: &Path, root: &Path) -> bool {
     let root = root.trim_end_matches('/');
     let prefix = format!("{}/", root);
     path.as_str() == root || path.starts_with(prefix.as_str())
-}
-
-fn relative_display(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
 }
 
 fn gb(bytes: u64) -> String {

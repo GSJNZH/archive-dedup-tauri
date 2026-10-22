@@ -32,6 +32,10 @@ pub struct Progress {
     pub archived: u64,
     pub unique: u64,
     pub size_gb: String,
+    #[serde(default)]
+    pub copied: u64,
+    #[serde(default)]
+    pub failed: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,4 +46,8 @@ pub struct JobDone {
     pub archived: u64,
     pub unique: u64,
     pub size_gb: String,
+    #[serde(default)]
+    pub copied: u64,
+    #[serde(default)]
+    pub failed: u64,
 }

@@ -1,3 +1,4 @@
+mod job;
 mod model;
 mod scan;
 
@@ -70,6 +71,8 @@ fn demo_progress(app: &AppHandle, stage: &str, message: impl Into<String>, perce
             archived: 71,
             unique: 71,
             size_gb: "28.1".to_string(),
+            copied: 0,
+            failed: 0,
         },
     );
 }
@@ -84,20 +87,14 @@ fn demo_done(app: &AppHandle, ok: bool, message: impl Into<String>, report: Stri
             archived: 71,
             unique: 71,
             size_gb: "28.1".to_string(),
+            copied: 0,
+            failed: 0,
         },
     );
 }
 
 #[tauri::command]
 fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> Result<(), String> {
-    let mode = scan::ScanMode::parse(&config.mode)?;
-    if config.archive.trim().is_empty()
-        || config.source.trim().is_empty()
-        || config.output.trim().is_empty()
-    {
-        return Err("归档目录、原素材目录和输出目录都不能为空。".to_string());
-    }
-
     if state.running.swap(true, Ordering::SeqCst) {
         return Err("任务正在运行。".to_string());
     }
@@ -105,62 +102,48 @@ fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> R
 
     let running = state.running.clone();
     let cancel = state.cancel.clone();
-    let archive = PathBuf::from(config.archive.trim());
-    let source = PathBuf::from(config.source.trim());
-    let output_path = config.output.clone();
-    let output = if output_path.trim().is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(output_path))
-    };
-    let dry_run = config.dry_run;
 
     std::thread::spawn(move || {
         let progress_app = app.clone();
-        let mut on_progress = |event: scan::ScanProgress| {
-            let _ = progress_app.emit(
-                "job-progress",
-                Progress {
-                    stage: event.stage,
-                    message: event.message,
-                    percent: event.percent,
-                    archived: event.archived,
-                    unique: event.unique,
-                    size_gb: event.size_gb,
-                },
-            );
+        let mut on_progress = |event: Progress| {
+            let _ = progress_app.emit("job-progress", event);
         };
 
-        let result = scan::scan_dirs(
-            &archive,
-            &source,
-            output.as_deref(),
-            mode,
-            &cancel,
-            &mut on_progress,
-        );
+        let result = job::run_job(&config, &cancel, &mut on_progress);
         running.store(false, Ordering::SeqCst);
 
         match result {
-            Ok(summary) => {
-                let prefix = if dry_run {
-                    "试运行完成"
+            Ok(result) => {
+                let action = if result.copy_mode == "move" {
+                    "移动"
                 } else {
-                    "扫描完成（Phase 1）"
+                    "复制"
                 };
-                let message = format!(
-                    "{}：已归档 {}，未归档 {}，{} GB；复制将在 Phase 2 接入",
-                    prefix, summary.archived, summary.unique, summary.size_gb
-                );
+                let mut message = if result.dry_run {
+                    format!(
+                        "试运行完成：已归档 {}，未归档 {}，{} GB；未复制任何文件",
+                        result.archived, result.unique, result.size_gb
+                    )
+                } else {
+                    format!(
+                        "{}完成：成功 {}，失败 {}，{} GB",
+                        action, result.copied, result.failed, result.size_gb
+                    )
+                };
+                if result.failed > 0 {
+                    message.push_str("；详见日志");
+                }
                 let _ = app.emit(
                     "job-done",
                     JobDone {
                         ok: true,
                         message,
                         report: String::new(),
-                        archived: summary.archived,
-                        unique: summary.unique,
-                        size_gb: summary.size_gb,
+                        archived: result.archived,
+                        unique: result.unique,
+                        size_gb: result.size_gb,
+                        copied: result.copied,
+                        failed: result.failed,
                     },
                 );
             }
@@ -174,6 +157,8 @@ fn start_job(app: AppHandle, state: State<'_, AppState>, config: JobConfig) -> R
                         archived: 0,
                         unique: 0,
                         size_gb: "0.0".to_string(),
+                        copied: 0,
+                        failed: 0,
                     },
                 );
             }
