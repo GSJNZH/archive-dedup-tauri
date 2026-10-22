@@ -1,3 +1,4 @@
+use crate::manifest;
 use crate::model::{JobConfig, Progress};
 use crate::scan::{self, ScanMode, ScanProgress, UniqueFile};
 use crate::verify;
@@ -182,6 +183,45 @@ pub fn run_job(
     let copy_mode = if move_files { "move" } else { "copy" };
     let copy_ceiling = if config.auto_verify { 90.0 } else { 100.0 };
     let mut last_emit = Instant::now();
+
+    if !move_files {
+        if let Ok(available) = fs2::available_space(output) {
+            let required = summary.unique_bytes.saturating_add(64 * 1024 * 1024);
+            if available < required {
+                return Err(format!(
+                    "磁盘空间不足：需要 {}，可用 {}",
+                    format_gb(required),
+                    format_gb(available)
+                ));
+            }
+        }
+    }
+
+    match manifest::write_manifest(output, source, archive, mode, copy_mode, &summary) {
+        Ok(path) => progress(Progress {
+            stage: "manifest".to_string(),
+            message: format!("复查清单: {}", path),
+            percent: 50.0,
+            archived: summary.archived,
+            unique: summary.unique,
+            size_gb: summary.size_gb.clone(),
+            copied: 0,
+            failed: 0,
+        }),
+        Err(err) => {
+            errors.push(format!("清单写入失败：{}", err));
+            progress(Progress {
+                stage: "notice".to_string(),
+                message: format!("警告: {}", err),
+                percent: 50.0,
+                archived: summary.archived,
+                unique: summary.unique,
+                size_gb: summary.size_gb.clone(),
+                copied: 0,
+                failed: 0,
+            });
+        }
+    }
 
     std::thread::scope(|scope| {
         for _ in 0..workers {

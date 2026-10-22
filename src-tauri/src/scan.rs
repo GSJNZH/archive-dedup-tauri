@@ -67,6 +67,7 @@ pub struct ScanSummary {
     pub archived: u64,
     pub unique: u64,
     pub total: u64,
+    pub source_bytes: u64,
     pub archived_bytes: u64,
     pub unique_bytes: u64,
     pub size_gb: String,
@@ -140,6 +141,7 @@ pub fn scan_dirs(
 
     let source_files = collect_files(&source, skip.as_deref(), &mut errors);
     let source_total = source_files.len() as u64;
+    let source_bytes: u64 = source_files.iter().map(|entry| entry.size).sum();
     let mut archived = 0u64;
     let mut unique = 0u64;
     let mut archived_bytes = 0u64;
@@ -203,6 +205,7 @@ pub fn scan_dirs(
         archived,
         unique,
         total: source_total,
+        source_bytes,
         archived_bytes,
         unique_bytes,
         size_gb: gb(unique_bytes),

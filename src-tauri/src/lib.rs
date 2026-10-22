@@ -1,4 +1,5 @@
 mod job;
+mod manifest;
 mod model;
 mod scan;
 mod verify;
