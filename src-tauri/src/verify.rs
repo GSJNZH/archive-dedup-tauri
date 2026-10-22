@@ -56,10 +56,10 @@ pub fn verify_items(
     let mut mismatched = 0u64;
     let mut extra = 0u64;
     let mut errors = Vec::new();
-    let mut ok_lines = Vec::new();
-    let mut missing_lines = Vec::new();
-    let mut mismatch_lines = Vec::new();
-    let mut extra_lines = Vec::new();
+    let mut ok_blocks = Vec::new();
+    let mut missing_blocks = Vec::new();
+    let mut mismatch_blocks = Vec::new();
+    let mut extra_blocks = Vec::new();
 
     for entry in WalkDir::new(output).follow_links(false) {
         let entry = match entry {
@@ -88,38 +88,57 @@ pub fn verify_items(
 
         let Some(item) = expected.remove(&relative) else {
             extra += 1;
-            if extra_lines.len() < 500 {
+            if extra_blocks.len() < 500 {
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                extra_lines.push(format!("[多余] {} | {}", relative, format_size(size)));
+                let label = match scan::fingerprint_file(entry.path(), size, mode) {
+                    Ok(key) => scan::fingerprint_label(&key),
+                    Err(err) => format!("读取失败：{}", err),
+                };
+                extra_blocks.push(format!(
+                    "[多余] {}\n       输出    {}  {}\n       说明    输出目录中存在，但本次扫描没有对应的源文件",
+                    relative,
+                    format_size(size),
+                    label
+                ));
             }
             continue;
         };
 
         checked += 1;
         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let source_label = scan::fingerprint_label(&item.key);
         match scan::fingerprint_file(entry.path(), size, mode) {
             Ok(actual) if actual == item.key => {
-                ok_lines.push(format!(
-                    "[OK] {} | {} | {}",
+                ok_blocks.push(format!(
+                    "[一致] {}\n       源文件  {}  {}\n       输出    {}  {}",
                     relative,
+                    format_size(item.size),
+                    source_label,
                     format_size(size),
                     scan::fingerprint_label(&actual)
                 ));
             }
             Ok(actual) => {
                 mismatched += 1;
-                mismatch_lines.push(format!(
-                    "[不一致] {} | {} | 期望 {} | 实际 {}",
+                mismatch_blocks.push(format!(
+                    "[不一致] {}\n       源文件  {}  {}\n       输出    {}  {}\n       说明    输出文件内容与扫描时的源文件不一致",
                     relative,
+                    format_size(item.size),
+                    source_label,
                     format_size(size),
-                    scan::fingerprint_label(&item.key),
                     scan::fingerprint_label(&actual)
                 ));
             }
             Err(err) => {
                 mismatched += 1;
                 errors.push(format!("{}: {}", relative, err));
-                mismatch_lines.push(format!("[不一致] {} | 无法读取：{}", relative, err));
+                mismatch_blocks.push(format!(
+                    "[不一致] {}\n       源文件  {}  {}\n       输出    无法读取：{}",
+                    relative,
+                    format_size(item.size),
+                    source_label,
+                    err
+                ));
             }
         }
     }
@@ -128,8 +147,8 @@ pub fn verify_items(
     missing_items.sort_by(|a, b| a.relative.cmp(&b.relative));
     for item in missing_items {
         missing += 1;
-        missing_lines.push(format!(
-            "[缺失] {} | {} | {}",
+        missing_blocks.push(format!(
+            "[缺失] {}\n       源文件  {}  {}\n       输出    未找到该文件",
             normalize_relative(&item.relative),
             format_size(item.size),
             scan::fingerprint_label(&item.key)
@@ -137,69 +156,106 @@ pub fn verify_items(
     }
 
     let ok = missing == 0 && mismatched == 0;
-    let mut details = Vec::new();
-    details.extend(ok_lines);
-    details.extend(missing_lines);
-    details.extend(mismatch_lines);
-    details.extend(extra_lines);
-    if details.is_empty() {
-        details.push("[空] 输出目录没有文件。".to_string());
+    let passed = checked.saturating_sub(mismatched);
+    let rate = if items.is_empty() {
+        100.0
+    } else {
+        passed as f64 / items.len() as f64 * 100.0
+    };
+
+    let mut blocks = Vec::new();
+    if !missing_blocks.is_empty() || !mismatch_blocks.is_empty() || !extra_blocks.is_empty() {
+        blocks.push("异常明细".to_string());
+        blocks.extend(missing_blocks);
+        blocks.extend(mismatch_blocks);
+        blocks.extend(extra_blocks);
     }
-    let details_text = details.join("\n");
+    if !ok_blocks.is_empty() {
+        blocks.push("通过明细".to_string());
+        blocks.extend(ok_blocks);
+    }
+    if blocks.is_empty() {
+        blocks.push("没有文件需要校验。".to_string());
+    }
+    let details_text = blocks.join("\n\n");
     let collection = sha256_hex(details_text.as_bytes());
 
-    let status = if ok { "通过" } else { "未通过" };
+    let (status, conclusion) = if ok {
+        if extra == 0 {
+            (
+                "通过",
+                "输出文件与源文件逐项对应，未发现缺失或内容差异，复制结果完整。",
+            )
+        } else {
+            (
+                "通过",
+                "输出文件与源文件逐项对应，未发现缺失或内容差异；输出目录另有无关文件，不影响本次复制完整性。",
+            )
+        }
+    } else {
+        ("未通过", "发现缺失或内容不一致，请查看下方异常明细。")
+    };
     let mode_label = mode.label();
     let copy_label = if copy_mode == "move" {
         "同盘移动"
     } else {
         "复制"
     };
-    let report_text = format!(
-        "\u{feff}============================================================\n\
-素材归档去重工具 · 归档完整性校验报告\n\
-============================================================\n\
-项目名称: {}\n\
-生成时间: {}\n\
-软件版本: v{}\n\
-项目地址: {}\n\
-比对模式: {}\n\
-处理方式: {}\n\
-原素材目录: {}\n\
-输出目录: {}\n\
-------------------------------------------------------------\n\
-校验结果: {}\n\
-归档命中: {}\n\
-未归档: {}\n\
-校验文件: {}\n\
-缺失: {}\n\
-不一致: {}\n\
-多余: {}\n\
-总大小: {}\n\
-------------------------------------------------------------\n\
-文件明细:\n{}\n\
-------------------------------------------------------------\n\
-集合 SHA256: {}\n\
-报告结束\n",
-        project,
-        Local::now().format("%Y-%m-%d %H:%M:%S"),
-        env!("CARGO_PKG_VERSION"),
-        PROJECT_URL,
-        mode_label,
-        copy_label,
-        source.display(),
-        output.display(),
-        status,
-        archived,
-        items.len(),
-        checked,
-        missing,
-        mismatched,
-        extra,
-        format_size(total_bytes),
-        details_text,
-        collection
-    );
+    let method = match mode {
+        ScanMode::Turbo => "文件大小 + 修改时间",
+        ScanMode::Fast => "文件大小 + 头 64KB MD5 + 尾 64KB MD5",
+        ScanMode::Exact => "文件大小 + 全量 MD5",
+    };
+
+    let mut report = String::new();
+    report.push_str("======================================================================\n");
+    report.push_str("                  素材归档去重工具 · 归档完整性校验报告\n");
+    report.push_str("======================================================================\n");
+    report.push_str(&format!("结论: {}\n", status));
+    report.push_str(&format!("说明: {}\n", conclusion));
+    report.push('\n');
+    report.push_str("一、任务信息\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&format!("项目名称    {}\n", project));
+    report.push_str(&format!(
+        "生成时间    {}\n",
+        Local::now().format("%Y-%m-%d %H:%M:%S")
+    ));
+    report.push_str(&format!("软件版本    v{}\n", env!("CARGO_PKG_VERSION")));
+    report.push_str(&format!("项目地址    {}\n", PROJECT_URL));
+    report.push_str(&format!("比对模式    {}\n", mode_label));
+    report.push_str(&format!("处理方式    {}\n", copy_label));
+    report.push_str(&format!("原素材目录  {}\n", source.display()));
+    report.push_str(&format!("输出目录    {}\n", output.display()));
+    report.push('\n');
+    report.push_str("二、校验结果\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&format!("归档命中        {}\n", archived));
+    report.push_str(&format!("未归档文件      {}\n", items.len()));
+    report.push_str(&format!("应校验文件      {}\n", items.len()));
+    report.push_str(&format!("校验通过        {}\n", passed));
+    report.push_str(&format!("缺失            {}\n", missing));
+    report.push_str(&format!("内容不一致      {}\n", mismatched));
+    report.push_str(&format!("输出多余        {}\n", extra));
+    report.push_str(&format!("通过率          {:.1}%\n", rate));
+    report.push_str(&format!("应校验总大小    {}\n", format_size(total_bytes)));
+    report.push('\n');
+    report.push_str("三、逐文件核对\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&details_text);
+    report.push('\n');
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str("四、校验说明\n");
+    report.push_str("----------------------------------------------------------------------\n");
+    report.push_str(&format!("本次使用 {} 比对。\n", method));
+    report.push_str("“一致”表示输出文件的大小和指纹与扫描时记录的源文件完全相同。\n");
+    report.push_str("报告只读取文件，不修改输出目录中的任何内容。\n");
+    report.push('\n');
+    report.push_str(&format!("集合 SHA256    {}\n", collection));
+    report.push_str("报告结束\n");
+    report.push_str("======================================================================\n");
+
+    let report_text = format!("\u{feff}{}", report);
 
     fs::create_dir_all(output).map_err(|err| format!("无法创建输出目录：{}", err))?;
     let report_path = output.join(REPORT_NAME);
@@ -381,6 +437,11 @@ mod tests {
         assert_eq!(result.checked, 1);
         assert_eq!(result.missing, 0);
         assert!(Path::new(&result.report).is_file());
+        let report = fs::read_to_string(&result.report).unwrap();
+        assert!(report.contains("结论: 通过"));
+        assert!(report.contains("[一致] a.txt"));
+        assert!(report.contains("源文件"));
+        assert!(report.contains("输出"));
 
         let missing_items = vec![UniqueFile {
             path: output.join("missing.txt"),
