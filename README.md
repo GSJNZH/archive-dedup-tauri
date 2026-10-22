@@ -2,7 +2,7 @@
 
 素材归档去重工具的 **Tauri 2 + Rust** 重构版。
 
-![Tauri UI](docs/tauri-ui-multisource.png)
+![Tauri UI](docs/tauri-ui-fixed.png)
 
 当前是 **Phase 4.1：多原素材 + 完整校验报告**：
 
