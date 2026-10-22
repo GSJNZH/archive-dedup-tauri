@@ -4,13 +4,14 @@
 
 ![Tauri UI](docs/tauri-ui.png)
 
-当前是 **Phase 3：扫描 + 复制/移动 + 校验报告**：
+当前是 **Phase 4：完整工具链**：
 
 - 界面：纯 HTML / CSS / JavaScript，深色苹果风，响应式布局
 - 后端：Rust（Tauri 2），已接好目录选择、打开目录、进度事件、取消
 - Phase 1：真实目录扫描、极速/快速/精确三种指纹、未归档清单
 - Phase 2：并发复制、同盘移动、跨盘退化为复制、保留相对目录和 mtime
 - Phase 3：输出校验、`归档完整性校验报告.txt`、自动校验、仅校验
+- Phase 4：兼容 Python 版的 manifest、磁盘空间预检、NSIS 安装包
 - 旧 Python 版暂时保留在 `../archive-dedup`，作为行为对照
 
 ## 直接预览 UI
@@ -67,6 +68,7 @@ src-tauri/          Tauri + Rust
   src/scan.rs       目录扫描、三种指纹、未归档清单
   src/job.rs        并发复制/移动、mtime、进度
   src/verify.rs     输出校验、完整性报告
+  src/manifest.rs   兼容 Python 版的复查清单
   tauri.conf.json   窗口与打包配置
   icons/            应用图标
 .github/workflows/  Windows 构建
@@ -78,7 +80,8 @@ src-tauri/          Tauri + Rust
 - [x] Phase 1：Rust 目录扫描、三种指纹、未归档清单（代码已接入，待 Windows 构建验证）
 - [x] Phase 2：复制 / 同盘移动 / 并发 / 取消
 - [x] Phase 3：输出校验、`归档完整性校验报告.txt`
-- [ ] Phase 4：安装包、Release、与 Python 版结果对照
+- [x] Phase 4：manifest、磁盘预检、NSIS 安装包、Release
+- [ ] 后续：代码签名、正式稳定版、更多等价性验证
 
 ## Phase 1 已实现
 
@@ -131,6 +134,19 @@ ScanSummary.unique_items
 
 “完成后自动校验”默认开启；“仅校验”会重新扫描归档/原素材并检查输出目录，不复制文件。
 
+## Phase 4 已实现
+
+- 输出目录写入 `_archive_dedup_manifest.json`
+  - `version: 1`
+  - 模式、处理方式、源目录、归档目录
+  - 源文件数量/字节数
+  - 每个未归档文件的 `rel`、`size`、`key`
+- 复制前用 `fs2` 检查输出磁盘剩余空间
+- NSIS 安装包与便携版 exe
+- GitHub Release 自动/手动构建
+
+manifest 的 `mode` 和 `copy_mode` 使用 Python 版同样的中文标签，`key` 数组也保持兼容。
+
 ## 说明
 
-浏览器预览的“开始处理 / 仅校验”是演示进度；Tauri 版会执行真实扫描、复制/移动和校验。
+浏览器预览的“开始处理 / 仅校验”是演示进度；Tauri 版会执行真实扫描、复制/移动、校验和清单写入。
