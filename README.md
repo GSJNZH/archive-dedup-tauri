@@ -2,9 +2,9 @@
 
 素材归档去重工具的 **Tauri 2 + Rust** 重构版。
 
-![Tauri UI](docs/tauri-ui.png)
+![Tauri UI](docs/tauri-ui-multisource.png)
 
-当前是 **Phase 4：完整工具链**：
+当前是 **Phase 4.1：多原素材 + 完整校验报告**：
 
 - 界面：纯 HTML / CSS / JavaScript，深色苹果风，响应式布局
 - 后端：Rust（Tauri 2），已接好目录选择、打开目录、进度事件、取消
@@ -12,6 +12,7 @@
 - Phase 2：并发复制、同盘移动、跨盘退化为复制、保留相对目录和 mtime
 - Phase 3：输出校验、`归档完整性校验报告.txt`、自动校验、仅校验
 - Phase 4：兼容 Python 版的 manifest、磁盘空间预检、NSIS 安装包
+- Phase 4.1：**支持添加多个原素材文件夹**；报告列出归档目录、原素材目录、输出目录内每个文件的大小和指纹
 - 旧 Python 版暂时保留在 `../archive-dedup`，作为行为对照
 
 ## 直接预览 UI
@@ -146,6 +147,25 @@ ScanSummary.unique_items
 - GitHub Release 自动/手动构建
 
 manifest 的 `mode` 和 `copy_mode` 使用 Python 版同样的中文标签，`key` 数组也保持兼容。
+
+## 多原素材文件夹
+
+界面的“原素材文件夹”支持：
+
+- 点“+ 添加”增加第二个、第三个素材目录
+- 每个目录独立选择 / 打开 / 移除
+- 单目录保持原来输出结构；多目录时输出自动加一层“原素材文件夹名”，避免相对路径冲突
+
+## 完整目录校验值
+
+`归档完整性校验报告.txt` 现在包含四部分：
+
+1. 未归档源文件 → 输出文件的逐项对账
+2. 归档目录每个文件的大小和指纹
+3. 原素材目录每个文件的大小、指纹、已归档/未归档状态
+4. 输出目录每个文件的大小、指纹、一致/不一致/多余状态
+
+报告样例：[docs/report-sample.txt](docs/report-sample.txt)
 
 ## 说明
 
