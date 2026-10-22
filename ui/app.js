@@ -250,6 +250,10 @@
 
   async function verifyOutput() {
     if (state.running) return;
+    if (isTauri) {
+      log("校验功能将在 Phase 3 接入；当前版本只完成扫描、复制/移动。", "warn");
+      return;
+    }
     const config = gatherConfig();
     if (!config.output) {
       log("请先选择输出文件夹。", "warn");
