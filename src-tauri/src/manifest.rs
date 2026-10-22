@@ -20,7 +20,7 @@ pub fn write_manifest(
         .map(|item| {
             json!({
                 "rel": item.source_relative.to_string_lossy().to_string(),
-                "source": item.source_root.display().to_string(),
+                "source": clean_path(&item.source_root),
                 "out_rel": item.relative.to_string_lossy().to_string(),
                 "size": item.size,
                 "key": key_to_json(&item.key),
@@ -28,13 +28,10 @@ pub fn write_manifest(
         })
         .collect();
 
-    let source_list: Vec<String> = sources
-        .iter()
-        .map(|source| source.display().to_string())
-        .collect();
+    let source_list: Vec<String> = sources.iter().map(|source| clean_path(source)).collect();
     let first_source = sources
         .first()
-        .map(|source| source.display().to_string())
+        .map(|source| clean_path(source))
         .unwrap_or_default();
     let payload = json!({
         "version": 1,
@@ -45,7 +42,7 @@ pub fn write_manifest(
         "source_bytes": summary.source_bytes,
         "source": first_source,
         "sources": source_list,
-        "archive": archive.display().to_string(),
+        "archive": clean_path(archive),
         "files": records,
     });
 
@@ -60,6 +57,11 @@ pub fn write_manifest(
     }
     fs::rename(&part, &path).map_err(|err| format!("替换清单失败：{}", err))?;
     Ok(path.display().to_string())
+}
+
+fn clean_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
 }
 
 fn key_to_json(key: &str) -> Value {

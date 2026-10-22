@@ -234,7 +234,7 @@ pub fn verify_items(
                     } else {
                         "未归档"
                     },
-                    record.source_root.display(),
+                    clean_path(&record.source_root),
                     record.source_relative,
                     format_size(record.size),
                     scan::fingerprint_label(&record.key)
@@ -285,7 +285,7 @@ pub fn verify_items(
     } else {
         sources
             .iter()
-            .map(|path| path.display().to_string())
+            .map(|path| clean_path(path))
             .collect::<Vec<_>>()
             .join("\n            ")
     };
@@ -308,9 +308,9 @@ pub fn verify_items(
     report.push_str(&format!("项目地址    {}\n", PROJECT_URL));
     report.push_str(&format!("比对模式    {}\n", mode_label));
     report.push_str(&format!("处理方式    {}\n", copy_label));
-    report.push_str(&format!("归档目录    {}\n", archive.display()));
+    report.push_str(&format!("归档目录    {}\n", clean_path(archive)));
     report.push_str(&format!("原素材目录  {}\n", source_list_text));
-    report.push_str(&format!("输出目录    {}\n", output.display()));
+    report.push_str(&format!("输出目录    {}\n", clean_path(output)));
     report.push('\n');
     report.push_str("二、校验结果\n");
     report.push_str("----------------------------------------------------------------------\n");
@@ -483,6 +483,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
         output.push(HEX[(value & 0x0f) as usize] as char);
     }
     output
+}
+
+fn clean_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
 }
 
 fn format_size(bytes: u64) -> String {

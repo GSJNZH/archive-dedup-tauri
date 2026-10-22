@@ -61,12 +61,12 @@
       input.placeholder = index === 0 ? "选择相机原素材目录" : "添加另一个原素材目录";
       input.value = path;
       const pick = document.createElement("button");
-      pick.className = "btn subtle";
+      pick.className = "btn subtle browse";
       pick.type = "button";
       pick.textContent = "浏览";
       pick.dataset.sourcePick = String(index);
       const open = document.createElement("button");
-      open.className = "btn ghost";
+      open.className = "btn ghost open";
       open.type = "button";
       open.textContent = "打开";
       open.dataset.sourceOpen = String(index);
